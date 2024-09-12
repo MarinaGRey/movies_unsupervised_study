@@ -1,0 +1,1190 @@
+---
+title: "Homework 1"
+subtitle: "Statistical Learning - UC3M"
+author: "Marina Gómez Rey"
+date: '11-2022'
+output:
+  html_document: 
+    css: my-theme.css
+    theme: cerulean
+    highlight: tango
+    number_sections: no
+    toc: yes
+    toc_depth: 1
+  pdf_document:
+    css: my-theme.css
+    theme: cerulean
+    highlight: tango
+    number_sections: yes
+    toc: yes
+    toc_depth: 1
+editor_options:
+  chunk_output_type: console
+---
+
+```{r global_options, include=T, echo = F}
+knitr::opts_chunk$set(echo = T, warning  =FALSE, message = FALSE)
+```
+
+# Include the Dataset
+
+First of all, the libraries are going to be added.
+
+```{r}
+library(tidyverse)
+library(leaflet)
+library(rgdal)
+library(stringr)
+library(htmltab)
+library(ggplot2)
+library(openxlsx)
+library(dplyr)
+library(factoextra)
+library(GGally)
+library(cluster)
+library(mice)
+library(mclust)
+library(kernlab)
+library(mclust)
+```
+
+Now, the dataset is included.
+
+```{r}
+data <- read.xlsx("MOVIE_DATA.xlsx")
+```
+
+To see what the dataset is about, let's display the head of it.
+
+```{r}
+head(data)
+```
+
+As it can be seen in the variables of the dataset, it talks about films and it
+combines both categorical values such as the titles, the director, some actors, 
+the country and language, ... And also numerical ones like the likes in facebook,
+the imdb score, the duration, the budget and gross, etc.
+
+Taking into account the previously mentioned variables, the most interesting 
+approach is to  study which factors make a film being considered successful. 
+There are several reasons: the economical (how much money the film earned, 
+which is the gross), the social media impact (how many likes it had), and the 
+official score in a webpage using the IMDb one.
+
+With this information, it can also be seen which actors, directors and countries 
+are the most popular and produce the best films.
+
+# 1. Data preprocessing
+
+The first process and one of the most important ones is cleaning the data. In order to do that, some steps described below must be studied and different proceedings are taken to prepare the data for the techniques that will be applied.
+
+**Erase useless columns**
+
+Firstly, there are some variables which seem to not give much information, these
+are, for example, the names of extra actors and their likes and the users that 
+voted as the results of these votations  are not reflected in the dataset. However, to check it, the correlation is plotted.
+
+```{r}
+ggcorr(data, label = T)
+```
+
+There are not very strong relationships, and the secondary actors are represented 
+in the cast total variables, so there is no problem in erasing them.
+
+```{r}
+data[5] <- NULL
+data[5] <- NULL
+data[7] <- NULL
+data[9] <- NULL
+data[10] <- NULL
+data[10] <- NULL
+data[10] <- NULL
+data[15] <- NULL
+data[16] <- NULL
+```
+
+**Eliminate duplicates**
+
+First, it has to be checked if there are duplicated values in the movie titles.
+```{r}
+sum(table(data$movie_title) - 1)
+```
+
+There are 126 duplicated values so they are erased.
+
+```{r}
+data <- data[!duplicated(data$movie_title), ]
+
+```
+
+**Changing the types of the variables**
+
+To make sure the numeric variables are numbers, they are converted
+
+```{r}
+data$duration = as.numeric(data$duration)
+data$director_facebook_likes = as.numeric(data$director_facebook_likes)
+data$actor_1_facebook_likes = as.numeric(data$actor_1_facebook_likes)
+data$gross = as.numeric(data$gross)
+data$cast_total_facebook_likes = as.numeric(data$cast_total_facebook_likes)
+data$budget = as.numeric(data$budget)
+data$title_year = as.numeric(data$title_year)
+data$imdb_score = as.numeric(data$imdb_score)
+data$movie_facebook_likes = as.numeric(data$movie_facebook_likes)
+
+```
+
+**Erasing empty values**
+
+First, we have to check if the empty values exist.
+
+```{r}
+sum(is.na(data))
+```
+
+The previous code shows that there are 2022 empty values, which is
+a large number so they cannot be erased without a previous analysis.
+
+To do that, the empty values graph is computed.
+
+```{r}
+md.pattern(data, rotate.names = TRUE) 
+```
+
+To see the columns with empty values, the names of the columns are displayed.
+
+```{r}
+names(which(colSums(is.na(data)) > 0))
+```
+
+That shows useful information, such as there are empty values in categorical
+variables, which are going to be erased as they are not a high percentage.
+
+```{r}
+data <- data[-which(is.na(data$director_name)),]
+data <- data[-which(is.na(data$color)),]
+data <- data[-which(is.na(data$actor_1_name)),]
+data <- data[-which(is.na(data$language)),]
+data <- data[-which(is.na(data$country)),]
+data <- data[-which(is.na(data$content_rating)),]
+```
+
+Once this has been done, we are going to treat the empty values within numerical
+variables. Firstly, as there are only two missing values in the Duration one, 
+they are erased.
+
+```{r}
+data <- data[-which(is.na(data$duration)),]
+```
+
+Secondly, the gross variable still has 864 empty values. However, as this 
+variable is very important it is better to replace this values with the mean.
+
+```{r}
+mean.gross = mean(data$gross, na.rm = TRUE)
+data$gross[is.na(data$gross)] = mean.gross
+```
+
+Lastly, the budget variable is also studied. The same as the gross variable happens
+with this one, so the same actions are taken.
+
+```{r}
+mean.budget = mean(data$budget, na.rm = TRUE)
+data$budget[is.na(data$budget)] = mean.budget
+```
+
+Now, as all the variables were taken into account, the number of NAs should be 0,
+and that is going to be checked with the graph.
+
+```{r}
+md.pattern(data, rotate.names = TRUE) 
+```
+
+**Outliers**
+
+As a first approach to outliers, which are extreme values, far from the rest, first
+a boxplot is computed to see visually if they seem to exist. I decided to test
+it with the gross variable as I believe this will be an important representative
+of a film's success.
+
+```{r}
+data %>% ggplot(aes(x=content_rating, y=gross)) + geom_boxplot(fill="purple")
+```
+
+Clearly, this boxplot shows outliers, so these are going to be studied with the code.
+
+There are two ways of identifying outliers:
+
+The 3-sigma rule, which takes into account the mean and the standard deviation and
+see which values do not belong to that interval.
+
+```{r}
+mu <- mean(data$gross)
+sigma <- sd(data$gross)
+
+sum(data$gross < mu - 3*sigma | data$gross > mu + 3*sigma)
+```
+
+This test gives as a result a total of 104 outliers.
+
+And the IQR, which takes into account the Inter Quantile Range.
+
+```{r}
+QI <- quantile(data$gross, 0.25)
+QS <- quantile(data$gross, 0.75)
+IQR = QS-QI
+
+sum(data$gross < QI - 1.5 * IQR | data$gross > QS + 1.5 * IQR)
+```
+
+This other test gives 384 outliers as a result.
+
+With these results, it has to be decided what to do with the outliers. 
+They do not represent a big percentage of the dataset. Also, it can be possible 
+that a film either produces a lot of benefits or very few. Taking that into account
+I strongly believe the best decision is to leave them as they can provide useful
+information regarding the success of a movie.
+
+**Scale the data**
+
+Scaling the data is an useful tool to have between the same ranges all the variables,
+so this technique is going to be applied with the scale function. 
+
+```{r}
+data$duration = scale(data$duration)
+data$director_facebook_likes = scale(data$director_facebook_likes)
+data$actor_1_facebook_likes = scale(data$actor_1_facebook_likes)
+data$gross = scale(data$gross)
+data$cast_total_facebook_likes = scale(data$cast_total_facebook_likes)
+data$budget = scale(data$budget)
+data$imdb_score = scale(data$imdb_score)
+data$movie_facebook_likes = scale(data$movie_facebook_likes)
+
+data %>% ggplot(aes(x=content_rating, y=gross)) + geom_boxplot(fill="purple")
+```
+
+It can be seen that the graphs do not change.
+
+# 2. Visualization
+
+Visualization can help us making some hypothesis based to questions with a visual tool.
+To create them the ggplot2 library is used, and they can show relationships between 
+variables.
+
+**Relationship between budget, gross and language**
+
+```{r}
+ggplot(data) +
+  aes(x = gross, y = budget) +
+  geom_point(shape = "circle", size = 1.5, colour = "#112446") +
+  geom_smooth(span = 0.75) +
+  theme_minimal() +
+  facet_wrap(vars(language)) +
+  labs(title = "Budget, gross and language") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+```
+
+This graph shows that there exists a relation between plus budget equals plus
+gross, but it is not as strong as someone could think. Also, the other languages with significant values are Hindi, Japanese, Mandarin, Spanish, German and French.
+
+**Relationship between language, countries and color**
+
+As the previous graph shows that English is the main language, I believe it is 
+important to know where are these films made. Also, the relationship with color
+or black and white films can be also established.
+
+```{r}
+ggplot(data) +
+  aes(x = language, y = country, fill = color) +
+  geom_tile(size = 1.2) +
+  scale_fill_manual(
+    values = c(` Black and White` = "#F8766D",
+    Color = "#D961FF")
+  ) +
+  labs(title = "Language, country and color") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), 
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.text.y = element_text(size = 6))
+```
+
+This graph makes obvious that almost all countries film their movies in English,
+which is a matter of globalization. However, there are countries such as USA that
+have films in various languages, probably because of multiculturalism. 
+However, they are not expected to be very popular because as shown in the previous graph
+other languages are not very profitable.
+
+On top of that, it can be seen that only 7 countries have films in black and white, so they are not expected to be very popular or have a big benefit as they do not belong 
+to the countries with better benefits that were established in the previous graph.
+
+**Relationship between gross. movie likes and cast likes**
+
+```{r}
+ggplot(data) +
+  aes(
+    x = gross,
+    y = movie_facebook_likes,
+    size = cast_total_facebook_likes
+  ) +
+  geom_point(shape = "circle", colour = "#D02727") +
+  geom_smooth(span = 0.75) +
+  labs(
+    title = "Gross, Cast facebook likes and Movie Facebook likes"
+  ) +
+  theme_minimal()
+```
+
+This graph shows a direct relationship between gross and movie likes in Facebook.
+However, when relating cast likes and gross, although it seems to exist
+a little relationship, it is not as clear as someone would expect, as the sizes 
+of the points are not that regular. Something similar happens with cast likes and
+movie likes.
+That suggests that movie likes are not completely related with the actors that 
+participate in them, and that the gross depends more on the movie itself that 
+its casting.
+
+**Relationship between gross and content rating**
+
+```{r}
+ggplot(data) +
+  aes(x = gross, y = content_rating) +
+  geom_boxplot(fill = "#9C89D6") +
+  labs(title = "Gross and Content Rating") +
+  theme_minimal()
+```
+
+This boxplots show that the films with the most gross are the ones with a rating
+of PG, G and PG-13.
+
+These are the General (for every audience, including children) audience, the Parent
+Guidance (parents should watch it before just in case there is something inappropriate,
+but normally children can watch them) and PG-13 (not suitable for children under 13).
+Taking this information into account, it seems that familiar films obtain better results.
+My belief is that this happens because it has a wider public.
+
+**Relationship between likes**
+
+```{r}
+ggplot(data) +
+  aes(
+    x = movie_facebook_likes,
+    y = actor_1_facebook_likes,
+    size = director_facebook_likes
+  ) +
+  geom_point(shape = "circle", colour = "#2DA72D") +
+  geom_smooth(span = 0.75) +
+  labs(title = "Movie Likes, Main Actor Likes and Director Likes") +
+  theme_minimal()
+```
+
+It can be seen that there is relationship between the main actor and the movie likes.
+However, it is not that clear in the director likes, as the size of the points is not regular.
+There are big points in both few liked movies and better liked ones.
+
+Taking into account the previously computed graph that related the movie facebook
+likes and the gross, it seems that the likes of the main actor also influence when
+creating a film with a better gross. This was not sure with the cast likes, but
+now it has been confirmed. However, the director does not seem that important.
+
+**Relationship between gross, IMDb score and years**
+
+```{r}
+ggplot(data) +
+  aes(x = imdb_score, y = gross) +
+  geom_point(shape = "circle", size = 1.5, colour = "#96B03A") +
+  geom_smooth(span = 0.75) +
+  labs(title = "Year, gross and IMDb score") +
+  theme_minimal() +
+  facet_wrap(vars(title_year))
+```
+
+This graph has some curious insights. First of all, it makes obvious the facts 
+that each year has more films than the previous ones. What I think is the most curious 
+is the fact that films from the past, like from years 1938 and 1939, seem to have 
+a big IMDb score. Year 1962 seems to be the inflection point where more films 
+started to be created.
+
+As a relationship between gross and IMDb score, it looks like there is a relationship, 
+as bigger IMDb score values give better gross results. 
+
+**Insights on best movies, directors and actors**
+
+To get an insight of which have been the best movies, directors and actors, some
+graphs with the names in terms of the gross and movie likes are computed.
+
+ - Best movies
+ 
+```{r}
+ggplot(data) + aes(x = gross, y = movie_facebook_likes) +
+  geom_point(color = "white") +
+  geom_text(aes(label = movie_title), size = 2.0, angle = 0) +
+  geom_smooth(formula = 'y ~ x', method = "lm", se = F,
+              color = "black", size = 0.4) +
+  theme(text = element_text(size = 6))+
+  labs(title = "Best Movies") +
+  theme_minimal()
+```
+
+The films that appear at the best positions are, for example: 'Jurassic World',
+'The Avengers', 'The Hunger games', 'The Dark knight rises', 'Avatar', 'Interstellar'
+or 'Titanic'. 
+
+- Best actors
+
+```{r}
+ggplot(data) + aes(x = gross, y = movie_facebook_likes) +
+  geom_point(color = "white") +
+  geom_text(aes(label = actor_1_name), size = 2.0, angle = 0) +
+  geom_smooth(formula = 'y ~ x', method = "lm", se = F,
+              color = "black", size = 0.4) +
+  theme(text = element_text(size = 6))+
+  labs(title = "Best Actors") +
+  theme_minimal()
+```
+
+The best actors seem to be Chris Hemsworth, Tom Hardy, Bryce Dallas Howard, Matthew 
+McConaughey, Henry Cavill, among others.
+
+- Best directors
+
+```{r}
+ggplot(data) + aes(x = gross, y = movie_facebook_likes) +
+  geom_point(color = "white") +
+  geom_text(aes(label = director_name), size = 2.0, angle = 0) +
+  geom_smooth(formula = 'y ~ x', method = "lm", se = F,
+              color = "black", size = 0.4) +
+  theme(text = element_text(size = 6))+
+  labs(title = "Best Directors") +
+  theme_minimal()
+```
+
+Finally, about directors, the best ones are: Chistopher Nolan, Joss Whedon, James 
+Cameron, Colin Trevorrow, etc.
+
+# 3. Principal Component Analysis
+
+Principal Component Analysis is a technique that lets us reduce the number of 
+variables that compose our dataset taking into account their correlations and 
+how much they explain, so the same amount of information is given with less variables.
+
+With this information in mind, PCA can help us to study our primary objective and
+finding also the best films, actors, directors, etc.
+
+Firstly, a dataframe with the numeric variables is created. Also, the movie titles 
+and the actor and director names, as well as the countries, are saved.
+
+Although the year is a numerical value, I strongly believe that studying which were 
+the most successful years in terms of good films that came out that year is more 
+interesting.
+
+```{r}
+dataframe = data.frame(data$gross, data$duration, data$director_facebook_likes, 
+                       data$actor_1_facebook_likes, data$cast_total_facebook_likes, 
+                       data$budget, data$imdb_score, data$movie_facebook_likes)
+
+titles = data$movie_title
+directors = data$director_name
+actors = data$actor_1_name
+countries = data$country
+years = data$title_year
+```
+
+With the data organised, the PCA can be computed.
+
+```{r}
+pca = prcomp(dataframe, scale = T)
+summary(pca)
+
+fviz_screeplot(pca, addlabels = TRUE)
+```
+
+The scree plot shows that with 4 components almost the 75% of the variance can be
+described. 
+
+For that reason, these 4 dimensions are going to be evaluated, starting with the 
+first one.
+
+**First component**
+
+To see the importance of the variables in this dimension, a graph is going to be
+computed.
+
+```{r}
+barplot(pca$rotation[,1], las=2, col="darkblue")
+```
+
+To see the graph better, as the squared loadings are equal to 1, computing them
+will show it better.
+
+```{r}
+sum(pca$rotation[,1]^2)
+
+fviz_contrib(pca, choice = "var", axes = 1)
+```
+
+This graph gives a lot of information. It clearly shows that the most important 
+factor is the impact on social media, as the first three  bars represent the 
+facebook likes of the cast, main actor and movie. However,
+the director likes do not seem to be that important, as their contribution is very
+low. The other important factor is the gross, which is still above the average.
+On the other hand, the graph does not give importance to the IMDb score.
+
+With this information, the best and worst films can be shown.
+
+```{r}
+# Best
+titles[order(pca$x[,1])][1:10]
+
+# Worst
+titles[order(pca$x[,1])][(length(titles) - 9):length(titles)]
+```
+
+Among the best movies, there are some very recognizable titles such as 'The dark
+knight rises', 'The avengers', 'Interstellar' or 'Inception'. 
+
+**Second component**
+
+```{r}
+fviz_contrib(pca, choice = "var", axes = 2)
+```
+
+The second component analysis gives, again, importance to likes, mainly of the cast
+and main actor. 
+
+However, there are several differences, mainly, the fact that now IMDb score is 
+a very important factor, contrary to the gross, which is lower than the average.
+
+With this information, let's see if the best and worst films have changed.
+
+```{r}
+# Best 
+titles[order(pca$x[,2])][1:10]
+
+# Worst
+titles[order(pca$x[,2])][(length(titles) - 9):length(titles)]
+```
+
+This second component gives as a result different titles from the first one, 
+both at the best and worst movies. That is probably because this ones have a 
+better IMDb score.
+
+**Third component**
+
+```{r}
+fviz_contrib(pca, choice = "var", axes = 3)
+```
+
+The third component gives importance to the budget mainly. It occupies most of the
+percentage. However, above the median, the director facebook likes, the gross and
+the IMDb score remain.
+
+Again, let's see the best and worst films.
+
+```{r}
+# Best 
+titles[order(pca$x[,3])][1:10]
+
+# Worst
+titles[order(pca$x[,3])][(length(titles) - 9):length(titles)]
+```
+
+The films are different probably because they are based on how much money was used
+to produced them. For that reason, we still have to study the fourth component.
+
+**Fourth component**
+
+```{r}
+fviz_contrib(pca, choice = "var", axes = 4)
+```
+
+This fourth component has more than a 70% on the director likes, which, again, 
+gives importance to social media. The budget is higher than the average but the rest 
+of the variables do not almost appear.
+
+Once again, the best and worst films are obtained.
+
+```{r}
+# Best 
+titles[order(pca$x[,4])][1:10]
+
+# Worst
+titles[order(pca$x[,4])][(length(titles) - 9):length(titles)]
+```
+
+Again the films change as they are almost only based on the director likes.
+
+**Individual contribution**
+
+Once we have the previous information, we can see how the films contribute individually
+to the total result. 
+
+This contribution is a representation of which are the best films until 2016.
+
+```{r}
+titles_z1 = titles[order(get_pca_ind(pca)$contrib[,1],decreasing=T)]
+
+fviz_contrib(pca, choice = "ind", axes = 1, top=50)+scale_x_discrete(labels=titles_z1)
+```
+
+The films that appear on the graph, which are very similar to the ones that showed 
+on the first dimension of the PCA, are very famous and recognized, such as 'Interstellar',
+'The dark knight rises', 'The avengers', 'Inception', 'The wolf of wall street',
+'The hunger games' or 'Titanic' as a few examples.
+
+Finally, some plots can be computed to check the importance of the variables, which 
+is our main objective.
+
+**Biplot**
+
+To see contributions of both movies and variables, the following biplot can be 
+computed.
+
+```{r}
+fviz_pca_biplot(pca, repel = TRUE)
+```
+
+Again, this plot shows the importance of likes (mainly actor 1), then gross and, 
+finally, IMDb score.
+
+**Final analysis**
+
+As the question to be answered is which factor is more beneficial to a movie's 
+success (either social media, economic motives or online score), the following 
+plots can be created to see if this variables really affect to the outcome.
+
+```{r}
+data.frame(z1=-pca$x[,1],z2=pca$x[,2]) %>% 
+  ggplot(aes(z1,z2,label=titles,color=data$imdb_score)) + geom_point(size=0) +
+  labs(title="IMDb score", x="PC1", y="PC2") +
+  theme_bw() + scale_color_gradient(low="yellow", high="darkred")+
+  theme(legend.position="bottom") + 
+  geom_text(size=2, hjust=0.6, vjust=0, check_overlap = TRUE) 
+```
+
+The IMDb score graph shows that the gradient is not regular, what means that online
+score is not that important when defining a movie as successful.
+
+```{r}
+data.frame(z1=-pca$x[,1],z2=pca$x[,2]) %>% 
+  ggplot(aes(z1,z2,label=titles,color=data$gross)) + geom_point(size=0) +
+  labs(title="Gross", x="PC1", y="PC2") +
+  theme_bw() + scale_color_gradient(low="lightblue", high="purple")+
+  theme(legend.position="bottom") + 
+  geom_text(size=2, hjust=0.6, vjust=0, check_overlap = TRUE) 
+```
+
+About the gross, it is clear that it is more related than IMDb score. However, 
+still very successful films have a blue tone while there are purple movies that
+do not represent part of the best group.
+
+Although there were four variables about social media impact, PCA has demonstrated 
+that the main actor's likes are the most important factor so the plot is going 
+to be created with that variable.
+
+```{r}
+data.frame(z1=-pca$x[,1],z2=pca$x[,2]) %>% 
+  ggplot(aes(z1,z2,label=titles,color=data$actor_1_facebook_likes)) + geom_point(size=0) +
+  labs(title="Main actor likes", x="PC1", y="PC2") +
+  theme_bw() + scale_color_gradient(low="lightblue", high="purple")+
+  theme(legend.position="bottom") + 
+  geom_text(size=2, hjust=0.6, vjust=0, check_overlap = TRUE) 
+```
+
+This plot really shows how the gradient increases in the same way the PCA impact 
+grows in the film. 
+
+Taking all the previous analysis into consideration, PCA has demonstrated that
+social media is the most important factor to make a film successful. After that, 
+gross, and finally, online score.
+
+**Best directors, actors, countries and years**
+
+With the PCA constructed, the best directors, actors, countries and years can be
+computed.
+
+```{r}
+data.frame(z1=-pca$x[,1],directors=directors) %>% 
+  group_by(directors) %>% summarise(mean=mean(z1)) %>% arrange(desc(mean))
+
+data.frame(z1=-pca$x[,1],actors=actors) %>% 
+  group_by(actors) %>% summarise(mean=mean(z1)) %>% arrange(desc(mean))
+
+data.frame(z1=-pca$x[,1],countries=countries) %>% 
+  group_by(countries) %>% summarise(mean=mean(z1)) %>% arrange(desc(mean))
+
+data.frame(z1=-pca$x[,1],years=years) %>% 
+  group_by(years) %>% summarise(mean=mean(z1)) %>% arrange(desc(mean))
+```
+
+Regarding actors and directors, they are the ones that appear on the top films 
+of the PCA analysis, so there are no surprises. Also, they coincide with the ones
+that appeared on the graphs computed in the beginning.
+
+However, about the years and countries there are some unexpected results. About the countries, USA appears on
+the tenth place, lower than expected. An explanation can be that many films are
+produced in that country so, although there are very successful ones, there are 
+many others that do not accomplish good results. However, other countries with
+less films obtain proportionally better results. This is the case, for example,
+of Japan, that was already seen in the graph to be successful.
+The same happens with years, it alternates old years, that seem worse at first 
+sight, with recent ones. Having said that, it is probable that older years have 
+less films but with better results, contrary to more recent years. This was seen 
+in the graphs computed in point 2, where really old films had very high IMDb scores.
+
+# 4. Factor Analysis
+
+Factor analysis is a technique that has a similar objective to PCA's one. 
+Its goal is to reduce the number of variables of a dataset into a fewer number
+of factors. It uses the variability and correlation of variables.
+
+As in PCA it was already found that we need 4 factors with the scree plot, factor 
+analysis will be done with that number.
+
+**No rotation and regression scores**
+
+```{r}
+x.f <- factanal(dataframe, factors = 4, rotation="none", scores="regression")
+x.f
+```
+
+Both the uniqueness and loadings have to be studied:
+
+On the one hand, regarding uniqueness, the closer to 1 the worse it explains the
+model. In this case, there are two variables with an uniqueness closer to 1: the 
+budget and the director Facebook likes. Also, there are two variables with values 
+close to 0: the cast Facebook likes and the actor 1 Facebook likes.
+
+On the other hand, regarding loadings, the closer to 1, the better representation 
+of the model, contrary to being closer to -1. Although there are 4 different factor 
+values, as SS loadings are bigger than 1 in factors 1 and 2, these are better, 
+specially 1 which is bigger than 2. In this factor, the actor 1 Facebook likes 
+and cast total Facebook likes are really close to 1, so they are good variables.
+There are no negative variables but IMDb score, the director Facebook likes and 
+the duration have small values.
+
+These conclusions can be better analysed with the cbind function that combines 
+the results of all factors into one.
+
+```{r}
+cbind(x.f$loadings, x.f$uniquenesses)
+```
+
+The values that are close to 0 are good representations, but only the actor 1 
+Facebook likes and the cast Facebook likes are close to this value. The lowest value
+after them is the one given by the gross and after, the IMDb score. Finally, the
+worst variables are the budget and the director Facebook likes.
+
+Now, let's graphically see the results with barplots.
+
+```{r}
+par(mfrow=c(3,1))
+barplot(x.f$loadings[,1], names=F, las=2, col="darkblue", ylim = c(-1, 1))
+barplot(x.f$loadings[,2], names=F, las=2, col="darkblue", ylim = c(-1, 1))
+barplot(x.f$loadings[,3], las=2, col="darkblue", ylim = c(-1, 1))
+barplot(x.f$loadings[,4], las=2, col="darkblue", ylim = c(-1, 1))
+```
+
+To check the results, another technique is going to be applied and analysed to
+see if the conclusions were correct.
+
+**Varimax rotation and Bartlett scores**
+
+```{r}
+x.f <- factanal(dataframe, factors = 4, rotation="varimax", scores="Bartlett", lower = 0.01)
+x.f
+```
+
+Basically, the conclusions that can be drawn from this proceeding are the same as 
+the ones obtained with the other method. Because of the SS loadings, the first
+factor is the most important one. In it, the variables with uniqueness close to 0 
+and loadings close to 1 are the main actor and cast Facebook likes. What means that
+again, these are the most principal. Then, the worst are the director Facebook likes
+and the budget as before.
+
+Let's combine them with cbind function.
+
+```{r}
+cbind(x.f$loadings, x.f$uniquenesses)
+```
+
+The same conclusions arise, the variables with values close to 0 (good variables)
+are the cast and actor 1 Facebook likes and the closest to 1 (worst variables) are
+the director Facebook likes and the budget.
+
+Finally, the plots can be computed.
+
+```{r}
+par(mfrow=c(3,1))
+barplot(x.f$loadings[,1], names=F, las=2, col="darkblue", ylim = c(-1, 1))
+barplot(x.f$loadings[,2], names=F, las=2, col="darkblue", ylim = c(-1, 1))
+barplot(x.f$loadings[,3], las=2, col="darkblue", ylim = c(-1, 1))
+barplot(x.f$loadings[,4], las=2, col="darkblue", ylim = c(-1, 1))
+```
+
+Taking into account all this information, plus the one obtained in the Principal
+Component Analysis, it is clear that social media is a crucial factor when making 
+a successful movie. On top of this, the cast is very important, as the top likes
+are the ones of the main actor and cast. After that, the other important factor 
+is the gross and, finally, the IMDb score.
+
+# 5. Clustering
+
+Clustering is a technique that groups the data based on their similarity, so the
+data that belong to a same group (cluster) have common characteristics. 
+
+There are several techniques that can be applied to compute the clustering.
+
+**Kmeans**
+
+ - Choosing the number of centers
+
+There are three ways of computing the optimal number of clusters.
+
+The first one is called WSS, which is based on the total within sum of squares.
+
+```{r}
+fviz_nbclust(dataframe, kmeans, method = 'wss')
+```
+That previous technique seems to give 4 as optimum cluster number.
+
+The second technique is called silhouette
+
+```{r}
+fviz_nbclust(dataframe, kmeans, method = 'silhouette')
+```
+This method gives 2 clusters as a result
+
+Lastly, the third one is called gap statistic, and it uses bootstrap.
+
+```{r}
+fviz_nbclust(dataframe, kmeans, method = 'gap_stat', k.max = 5)
+```
+This technique gives as a result 5 clusters
+
+I will use this last technique to compute the clusters.
+
+ - Compute and interpret clusters
+
+```{r}
+fit = kmeans(dataframe, centers = 5, nstart=100)
+groups = fit$cluster
+
+barplot(table(groups), col="blue")
+```
+
+The previous barplot shows how the data is distributed through each group. In it, it is clear that the result is not regular, as there are two bigger groups, 1 and 4, and three smaller, 2, 3 and 5, being 3 almost nonexistent.
+
+Once the groups are created, they can be interpreted.
+First, let's compute the centers, which are artificial films that represent each group. Taking into account its characteristics, it can be imagined which type of films belong to each group. 
+ 
+```{r}
+centers=fit$centers
+centers
+```
+
+To see it better, a graph can be computed.
+
+```{r}
+i=1  # plotting the centers in cluster 1
+bar1=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar1,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+
+
+i=2  # plotting the centers in cluster 2
+bar2=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar2,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+
+i=3  # plotting the centers in cluster 2
+bar2=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar2,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+
+i=4  # plotting the centers in cluster 2
+bar2=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar2,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+
+i=5  # plotting the centers in cluster 2
+bar2=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar2,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+```
+
+Regarding cluster 1, it can be seen that it includes unsuccessful movies, as all the values are in negative. Specially, IMDb score is extremely low. 
+
+Contrary to cluster 1, cluster 2 includes successful films that, however, have few director likes.
+
+Cluster 3 includes films that were very expensive to create but did not obtain good results. 
+
+Cluster 4 includes very average films, that were neither successful nor the contrary.
+
+Finally, cluster 5 includes  successful movies, but with very high values in the director Facebook likes.
+
+Now, let's analyse our principal determinant variables in each cluster.
+
+```{r}
+as.data.frame(dataframe) %>% mutate(cluster=factor(groups), data.gross = data.gross, data.actor_1_facebook_likes = data.actor_1_facebook_likes, data.imdb_score = data.imdb_score) %>%
+  ggplot(aes(x = cluster, y = data.actor_1_facebook_likes)) + 
+  geom_boxplot(fill="lightblue") +
+  labs(title = "Main actor Facebook likes by cluster", x = "", y = "", col = "") 
+```
+
+About the actor 1 Facebook likes, 2 has the highest values (5 is close), and 3 the lowest.
+
+```{r}
+as.data.frame(dataframe) %>% mutate(cluster=factor(groups), data.gross = data.gross, data.actor_1_facebook_likes = data.actor_1_facebook_likes, data.imdb_score = data.imdb_score) %>%
+  ggplot(aes(x = cluster, y = data.gross)) + 
+  geom_boxplot(fill="lightblue") +
+  labs(title = "Gross by cluster", x = "", y = "", col = "")
+```
+
+About the gross, it can be seen that cluster 2 has the greatest values and 3 the lowest.
+
+```{r}
+as.data.frame(dataframe) %>% mutate(cluster=factor(groups), data.gross = data.gross, data.actor_1_facebook_likes = data.actor_1_facebook_likes, data.imdb_score = data.imdb_score) %>%
+  ggplot(aes(x = cluster, y = data.imdb_score)) + 
+  geom_boxplot(fill="lightblue") +
+  labs(title = "IMDb score by cluster", x = "", y = "", col = "")
+```
+
+Finally, about the IMDb score, clusters 3 and 5 have the greatest values, and 1 the lowest.
+
+Taking this into consideration, it is clear that cluster 2 represent the best movies, and 3 and 1 the worst. 
+
+ - Compute the plots
+
+First, let's compute the clusplot.
+
+```{r}
+fviz_cluster(fit, data = dataframe, geom = c("point"),ellipse.type = 'norm', pointsize=1)+
+  theme_minimal()+geom_text(label=titles,hjust=0, vjust=0,size=2,check_overlap = T)+scale_fill_brewer(palette="Paired")
+```
+
+As expected, the clusplot groups the best films in cluster 2, and the worst in 1 and 3.
+
+Silhouette plot
+
+```{r}
+d <- dist(dataframe, method="euclidean")  
+sil = silhouette(groups, d)
+plot(sil, col=1:5, main="", border=NA)
+```
+
+This plot allows to see if the data matches the cluster well based on the distance of data points to their clusters. 
+
+In this case, clusters 1, 3 and 5 are wide so they seem to be good, whereas 2 and 4 are less wide.
+
+**Mahalanobis distance**
+
+As kmeans uses the Euclidean distance, correlations between variables are not taken into account. For that reason, Mahalanobis distance can be used so this correlations are taken into account.
+However, it uses the same shape and orientations for the whole data.
+
+First, let's apply this method and compute the centers and groups.
+
+ - Compute and interpret clusters
+
+```{r}
+S_x <- cov(dataframe)
+iS <- solve(S_x)
+e <- eigen(iS)
+V <- e$vectors
+B <- V %*% diag(sqrt(e$values)) %*% t(V)
+Xtil <- scale(dataframe,scale = FALSE)
+dataframeS <- Xtil %*% B
+
+fit.mahalanobis = kmeans(dataframeS, centers=3, nstart=100)
+groups = fit.mahalanobis$cluster
+centers=fit.mahalanobis$centers
+colnames(centers)=colnames(dataframe)
+centers
+```
+
+Once we have them we can see everything graphically.
+
+```{r}
+i=1  # plotting the centers in cluster 1
+bar1=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar1,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+```
+
+Cluster 1 seems to include the most successful films, as all the variables are positive and the director Facebook likes has a very big value.
+
+```{r}
+i=2  # plotting the centers in cluster 1
+bar1=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar1,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+
+i=3  # plotting the centers in cluster 1
+bar1=barplot(centers[i,], las=2, col="darkblue", ylim=c(-2,2), main=paste("Cluster", i,": Group center in blue, global center in red"))
+points(bar1,y=apply(dataframe, 2, quantile, 0.50),col="red",pch=19)
+```
+
+Clusters 2 and 3 are very similar. Their main differences are the gross, which is positive on cluster 2 meanwhile it is negative on cluster 3, and the IMDb score, being negative on cluster 2 and positive on cluster 3. The other variables also have differences but are less notable.
+
+ - Compute the plot
+
+Let's compute the clusplot.
+
+```{r}
+fviz_cluster(fit.mahalanobis, data = dataframe, geom = c("point"),ellipse.type = 'norm', pointsize=1)+
+  theme_minimal()+geom_text(label=titles,hjust=0, vjust=0,size=2,check_overlap = T)+scale_fill_brewer(palette="Paired")
+```
+
+The results are not as expected, as now the best films seem to be in group 3 instead of 1, which seemed to be the best.
+
+ - Analyse similarity of clusters
+
+```{r}
+adjustedRandIndex(fit$cluster,
+                  fit.mahalanobis$cluster) 
+```
+
+This coefficient gives a result of 0,33 which means that are somehow similar but not much.
+
+**Kernel k-means**
+
+Kernel k-means mission is to capture clusters that are not linearly separable in input space.
+
+ - Compute and interpret clusters
+
+Let's compute it with five clusters.
+
+```{r}
+fit.ker <- kkmeans(as.matrix(dataframe), centers=5, kernel="rbfdot") 
+centers(fit.ker)
+size(fit.ker)
+withinss(fit.ker)
+```
+
+Taking into account the values of the centers, some conclusions about the clusters can be drawn.
+
+The first three clusters seen to have very unsuccessful movies as the values in every variable are negative and not close to 0.
+Cluster 4, on the contrary have positive values, some close to 1, what shows that it has the most successful films. 
+Finally, cluster 5 has 'not that good' films, as they have negative values in most variables. However, in director and main actor Facebook likes they have positive values, and this variables have been proven to be crucial.
+
+ - Compute the plot
+
+```{r}
+object.ker = list(data = dataframe, cluster = fit.ker@.Data)
+fviz_cluster(object.ker, geom = c("point"), ellipse=F,pointsize=1)+
+  theme_minimal()+geom_text(label=titles, hjust=0, vjust=0,size=2,check_overlap = T)+scale_fill_brewer(palette="Paired")
+```
+
+The cluster plot, as expected, has the best movies in cluster 4, and clusters 1, 2 and 3 have similar values, which are not good ones.
+
+**EM clustering**
+
+EM clustering performs clustering using the Expectation Maximization algorithm.
+
+This algorithm is based on probabilities of the data belonging to each cluster, 
+and maximizing this value, the final clusters are obtained.
+
+ - Computing and analyzing the clusters
+
+The clusters are created and its groups analysed.
+
+```{r}
+res.Mclust <- Mclust(scale(dataframe))
+summary(res.Mclust)
+```
+
+7 clusters have been created. The largest is number 4 with 
+1145 observations, and the smallest number 1, with 287.
+
+
+In this method, the number of groups is automatically done, so there is no need
+to study previously how many groups are going to be created. However, a graph
+where the number of clusters can be seen visually is going to be computed.
+
+```{r}
+fviz_mclust(object = res.Mclust, what = "BIC", pallete = "jco") +
+  scale_x_discrete(limits = c(1:10))
+```
+
+In this graph it can be seen that 7 groups is the optimal number.
+
+```{r}
+head(res.Mclust$z)
+head(res.Mclust$classification)
+```
+
+This heads can be seen to understand how the clusters were made. The z component 
+saves the probabilities this method is based in. The classification is where the
+data is assigned to a group.
+
+ - Compute the plot
+
+```{r}
+fviz_mclust(object = res.Mclust, what = "classification", geom = "point",
+            pallete = "jco")
+```
+
+From the plot some conclusions can be drawn. Clusters 2, 4, 5 and 7 are almost 
+identical and group not successful films. After, clusters 3 and 6 represent 
+better movies but with no big values. Finally, cluster 1 represents the most
+successful films.
+
+
+**PAM**
+
+The PAM technique is similar to kmeans but, instead of creating a fictitious film
+to represent the group, it takes an already existent one.
+
+Let's create a graph with 5 clusters.
+
+```{r}
+fit.pam <- eclust(dataframe, "pam", stand=TRUE, k=5, graph=F)
+
+fviz_cluster(fit.pam, data = dataframe, geom = c("point"), pointsize=1)+
+  theme_minimal()+geom_text(label=titles,hjust=0, vjust=0,size=1,check_overlap = T)+scale_fill_brewer(palette="Paired")
+```
+
+About the graph of the PAM clustering, it can be seen that the worst values appear
+on clusters number 4 and 5. After them, clusters 1 and 3 include better films that
+however are not among the best. Finally, cluster 2 is the one that represents the
+most successful movies.
+
+**Hierarchical clustering**
+
+Hierarchical clustering begins by treating each row as a cluster and then grouping them
+in a hierarchical way.
+
+The code I used to create it is the following one:
+
+```{r}
+# Create clusters
+
+#d = dist(scale(dataframe), method = "euclidean")
+#hc <- hclust(d, method = "ward.D2") 
+
+# Graph
+
+#fviz_dend(x = hc,
+#         k = 5,
+#         color_labels_by_k = TRUE,
+#          cex = 0.8,
+#       type = "phylogenic",
+#        repel = TRUE)+  labs(title="Socio-economic-health tree clustering of the world") + theme(axis.text.x=element_blank(),axis.text.y=element_blank())
+```
+
+*It is with comments because it takes a really long time to process and, after 
+doing it, I realized that this model is not very useful for the dataset I am 
+using, as the result it gave have mixed colors and not well defined groups as
+it should.
+
+# Conclusion
+
+As a general insight of all the techniques and questions several conclusions have
+been reached.
+
+It was concluded that 4 variables were enough to reach a 75% of the variability
+of the dataset, that is, with 4 variables we can reach the same conclusions.
+
+About the importance of the variables, it is clear that social media is crucial
+and is the factor that represents the best the success of a film. After that, the 
+gross and, finally, the IMDb score. On top of that, it was concluded that the cast 
+of a film really makes a difference, as the main actor and the cast likes are one 
+of the most important factors. However, the directors are not that principal.
+
+With this information, we were also able to compute the best films, actors and 
+directors which coincided in both the unsupervised techniques and the graphs
+created in the beggining as hypothesis. 
+
