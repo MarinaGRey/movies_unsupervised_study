@@ -43,10 +43,3 @@ Clustering techniques like K-means were applied to group similar observations. T
 ## Conclusion
 The analysis revealed important insights, such as the significant contribution of variables like actor Facebook likes and gross earnings to the success of a movie. On the other hand, variables like the director's Facebook likes had a minimal effect.
 
-## Installation
-To run the project locally, follow these steps:
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/statistical-learning-project.git
-   cd statistical-learning-project
